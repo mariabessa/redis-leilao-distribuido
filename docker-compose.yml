@@ -1,37 +1,49 @@
 version: '3'
 services:
-# cada container:
-  redis: #servidor de mensagens pub sub
+  redis:
     image: redis:latest
     ports:
       - "6379:6379"
+    volumes:
+      - redis_data:/data
 
   servidor:
     build: .
     command: node servidor.js
     depends_on:
       - redis
+    environment:
+      - REDIS_URL=redis://redis:6379
 
   cliente1:
     build: .
+    command: node cliente.js
     environment:
       - NOME=Kaka
       - LANCE=10
+      - REDIS_URL=redis://redis:6379
     depends_on:
       - redis
 
   cliente2:
     build: .
+    command: node cliente.js
     environment:
       - NOME=Camila
       - LANCE=150
+      - REDIS_URL=redis://redis:6379
     depends_on:
       - redis
 
   cliente3:
     build: .
+    command: node cliente.js
     environment:
       - NOME=Maria Bessa
       - LANCE=180000
+      - REDIS_URL=redis://redis:6379
     depends_on:
       - redis
+
+volumes:
+  redis_data:
