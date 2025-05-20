@@ -1,0 +1,12 @@
+{
+  "name": "redis-leilao-distribuido",
+  "version": "1.0.0",
+  "description": "Simulação de um sistema de leilão distribuído em tempo real utilizando Redis Pub/Sub, Node.js e Docker. Trabalho prático da disciplina de Sistemas Distribuídos (BCC362).",
+  "main": "cliente.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
+}
