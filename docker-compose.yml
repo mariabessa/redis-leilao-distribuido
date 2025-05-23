@@ -3,13 +3,15 @@ services:
   redis:
     image: redis:latest
     ports:
-      - "6379:6379"
+      - "6380:6379"
     volumes:
       - redis_data:/data
 
   servidor:
     build: .
     command: node servidor.js
+    ports:
+     - "3000:3000"
     depends_on:
       - redis
     environment:
@@ -21,6 +23,7 @@ services:
     environment:
       - NOME=Kaka
       - LANCE=10
+      - LANCE_MAXIMO=100
       - REDIS_URL=redis://redis:6379
     depends_on:
       - redis
@@ -31,6 +34,7 @@ services:
     environment:
       - NOME=Camila
       - LANCE=150
+      - LANCE_MAXIMO=200
       - REDIS_URL=redis://redis:6379
     depends_on:
       - redis
@@ -40,7 +44,8 @@ services:
     command: node cliente.js
     environment:
       - NOME=Maria Bessa
-      - LANCE=180000
+      - LANCE=180
+      - LANCE_MAXIMO=250
       - REDIS_URL=redis://redis:6379
     depends_on:
       - redis

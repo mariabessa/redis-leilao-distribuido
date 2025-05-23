@@ -1,48 +1,54 @@
-//implementar o cliente: da um lance e escuta o leilão
+// implementar o cliente: dá um lance e escuta o leilão
 const { createClient } = require('redis');
-const readline = require('readline');
 
-const clienteRedis = createClient ({ url: 'redis://redis:6379' });
-const NOME = process.env.NOME;
-const LANCE_INICIAL = parseInt(process.env.LANCE) || 0;
+const clienteRedis = createClient({ url: 'redis://redis:6379' });
+const publisher = clienteRedis.duplicate();
+
+const NOME = process.env.NOME || 'Anonimo';
+const LANCE_INICIAL = parseInt(process.env.LANCE || 0);
+const LANCE_MAXIMO = parseInt(process.env.LANCE_MAXIMO || 200);
+
+let jaDeiLanceInicial = false;
 
 (async () => {
-    await clienteRedis.connect();
-    console.log(`${NOME} conectado ao leilao`);
+  await clienteRedis.connect();
+  await publisher.connect();
+  console.log(`${NOME} conectado ao leilao`);
 
-    const subscriber = clienteRedis.duplicate();
-    await subscriber.connect();
+  const subscriber = clienteRedis.duplicate();
+  await subscriber.connect();
 
-    // Inscreve no canal de leilão
-    await subscriber.subscribe('leilao', (message) => {
-        const msg = JSON.parse(message);
-        console.log(`${NOME} recebeu:`, msg.mensagem);
-  
-        // Lógica para contra-lances automáticos
-        if (msg.tipo === 'lance' && msg.valor < LANCE_MAXIMO) {
-            const novoLance = msg.valor + 10;
-            publisher.publish('comando', JSON.stringify({
-                tipo: 'lance',
-                nome: NOME,
-                valor: novoLance
-            }));
-        }
-    });
+  // Espera 5 segundos, dá o lance inicial, e só depois se inscreve no canal
+  setTimeout(async () => {
+    await publisher.publish('comando', JSON.stringify({
+      tipo: 'lance',
+      nome: NOME,
+      valor: LANCE_INICIAL,
+    }));
+    jaDeiLanceInicial = true;
+    console.log(`${NOME} enviou lance inicial de ${LANCE_INICIAL}`);
 
-    // Interface para enviar lances 
-    const rl = readline.createInterface({
-        input: process.stdin,
-        output: process.stdout
-    });
-
-    // Simula envio de lance apos 5s
-    setTimeout(async() => {
-        await clienteRedis.publish('comando', JSON.stringify({
-            tipo: 'lance',
-            nome: NOME,
-            valor: LANCE_INICIAL
+    // Agora começa a escutar os lances
+    await subscriber.subscribe('leilao', async (message) => {
+      const msg = JSON.parse(message);
+      console.log(`${NOME} recebeu: ${msg.mensagem}`);
+    //   console.log(msg);
+      // Responde automaticamente se valor for menor que o máximo
+      if (
+        jaDeiLanceInicial &&
+        msg.tipo === 'lance' &&
+        msg.nome !== NOME &&
+        msg.valor < LANCE_MAXIMO
+      ) {
+        const novoLance = msg.valor + 10;
+        console.log(`${NOME} respondendo com novo lance de R$${novoLance}`);
+        await publisher.publish('comando', JSON.stringify({
+          tipo: 'lance',
+          nome: NOME,
+          valor: novoLance,
         }));
-        console.log(`${NOME} enviou lance inicial de ${LANCE_INICIAL}`);
-    }, 5000);
+      }
+    });
 
+  }, 5000);
 })();

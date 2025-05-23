@@ -17,6 +17,29 @@ const subscriber = redisClient.duplicate();
     await publisher.connect();
     await subscriber.connect();
     console.log('Conectado ao Redis');
+
+    // Comando para iniciar leilão
+    await subscriber.subscribe('comando', async (message) => {
+      const cmd = JSON.parse(message);
+      if (cmd.tipo === 'iniciar') {
+        itemLeilao = cmd.item;
+        leilaoAtivo = true;
+        lanceAtual = 0;
+        vencedorAtual = '';
+      } else if (cmd.tipo === 'lance') {
+        const { nome, valor } = cmd;
+        if (valor > lanceAtual) {
+          lanceAtual = valor;
+          vencedorAtual = nome;
+          await publisher.publish(CANAL_LEILAO, JSON.stringify({
+              tipo: 'lance',
+              nome,
+              valor,
+              mensagem: `Novo lance de ${nome}: R$${valor}`
+          }));
+        }
+      }
+    });
 })();
 
 // Estado do leilao
@@ -46,16 +69,7 @@ app.post('/iniciar', async (req, res) => {
     res.json({ status: 'Leilao iniciado', item});
 });
 
-// Comando para iniciar leilão
-await subscriber.subscribe('comando', async (message) => {
-  const cmd = JSON.parse(message);
-  
-  if (cmd.tipo === 'iniciar') {
-    await iniciarLeilao(cmd.item);
-  } else if (cmd.tipo === 'lance') {
-    await processarLance(cmd.nome, cmd.valor);
-  }
-});
+
 
 // Rota para receber lances
 app.post('/lance', async (req, res) => {
@@ -102,17 +116,17 @@ app.post('/finalizar', async (req, res) => {
     });
 });
 
-// Publica os lances no canal Redis
-app.post('/lance', async (req, res) => {
-  const { nome, valor } = req.body;
-  await publisher.publish('leilao', JSON.stringify({
-    tipo: 'lance',
-    nome,
-    valor,
-    mensagem: `Novo lance de ${nome}: R$${valor}`
-  }));
-  res.json({ status: 'Lance aceito' });
-});
+// // Publica os lances no canal Redis
+// app.post('/lance', async (req, res) => {
+//   const { nome, valor } = req.body;
+//   await publisher.publish('leilao', JSON.stringify({
+//     tipo: 'lance',
+//     nome,
+//     valor,
+//     mensagem: `Novo lance de ${nome}: R$${valor}`
+//   }));
+//   res.json({ status: 'Lance aceito' });
+// });
 
 // Inicia servidor
 const PORT = 3000;
