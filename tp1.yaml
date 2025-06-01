@@ -51,6 +51,7 @@ spec:
       containers:
         - name: servidor
           image: camilaapa/redis_app:latest
+          imagePullPolicy: Never
           command: ["node", "servidor.js"]
           ports:
             - containerPort: 3000

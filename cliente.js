@@ -23,37 +23,51 @@ let jaDeiLanceInicial = false;
   // Espera 5 segundos, dá o lance inicial, e só depois se inscreve no canal
   setTimeout(async () => {
     await publisher.publish('comando', JSON.stringify({
-      tipo: 'lance',
-      nome: NOME,
-      valor: LANCE_INICIAL,
+        tipo: 'lance',
+        nome: NOME,
+        valor: LANCE_INICIAL,
+        productId: PRODUCT_ID
     }));
     jaDeiLanceInicial = true;
-    console.log(`${NOME} enviou lance inicial de R$${LANCE_INICIAL}`);
+    console.log(`${NOME} enviou lance inicial de R$${LANCE_INICIAL} para ${PRODUCT_ID}`);
     process.stdout.write("");
 
-    // Agora começa a escutar os lances
-    await subscriber.subscribe('leilao', async (message) => {
-      const msg = JSON.parse(message);
-      console.log(`${NOME} recebeu: ${msg.mensagem}`);
-      process.stdout.write("");
+    // Inscreve no canal específico do produto
+    await subscriber.subscribe(`leilao:${PRODUCT_ID}`, async (message) => {
+        const msg = JSON.parse(message);
+        console.log(`${NOME} recebeu: ${msg.mensagem}`);
+        process.stdout.write("");
 
-      // Responde automaticamente se valor for menor que o máximo
-      if (
-        jaDeiLanceInicial &&
-        msg.tipo === 'lance' &&
-        msg.nome !== NOME &&
-        msg.valor < LANCE_MAXIMO
-      ) {
-        const novoLance = msg.valor + 10;
-        console.log(`${NOME} respondendo com novo lance de R$${novoLance}`);
-        await publisher.publish('comando', JSON.stringify({
-          tipo: 'lance',
-          nome: NOME,
-          valor: novoLance,
-        }));
-      }
+        if (msg.tipo === 'fim') {
+            if (msg.vencedor === NOME) {
+                console.log(`🎉 ${NOME} GANHOU o leilão para ${msg.item} (ID: ${PRODUCT_ID}) com R$${msg.lance}!`);
+            } else {
+                console.log(`😢 ${NOME} perdeu o leilão para ${msg.item} (ID: ${PRODUCT_ID}). Vencedor: ${msg.vencedor}`);
+            }
+            await clienteRedis.quit();
+            await publisher.quit();
+            await subscriber.quit();
+            process.exit(0);
+            return;
+        }
+
+        if (
+            jaDeiLanceInicial &&
+            msg.tipo === 'lance' &&
+            msg.nome !== NOME &&
+            msg.valor < LANCE_MAXIMO
+        ) {
+            const novoLance = msg.valor + 10;
+            console.log(`${NOME} respondendo com novo lance de R$${novoLance} para ${PRODUCT_ID}`);
+            await publisher.publish('comando', JSON.stringify({
+                tipo: 'lance',
+                nome: NOME,
+                valor: novoLance,
+                productId: PRODUCT_ID
+            }));
+        }
     });
-  }, 5000);
+}, 5000);
 })();
 
 await subscriber.subscribe('leilao', async (message) => {

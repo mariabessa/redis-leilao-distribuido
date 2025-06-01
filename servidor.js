@@ -1,4 +1,3 @@
-//implementar o servidor: le os lance e pub o maior lance
 const express = require('express');
 const { createClient } = require('redis');
 const cors = require('cors');
@@ -7,10 +6,13 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Conexao com Redis
-const redisClient = createClient({ url: 'redis://redis:6379'});
+// Conexão com Redis
+const redisClient = createClient({ url: 'redis://redis:6379' });
 const publisher = redisClient.duplicate();
 const subscriber = redisClient.duplicate();
+
+// Estado dos leilões (por produto)
+const leiloes = new Map(); // Mapa para armazenar estado de cada leilão por productId
 
 (async () => {
     await redisClient.connect();
@@ -18,118 +20,201 @@ const subscriber = redisClient.duplicate();
     await subscriber.connect();
     console.log('Conectado ao Redis');
 
-    // Comando para iniciar leilão
+    // Comando para processar mensagens no canal 'comando'
     await subscriber.subscribe('comando', async (message) => {
-      const cmd = JSON.parse(message);
-      if (cmd.tipo === 'iniciar') {
-        itemLeilao = cmd.item;
-        leilaoAtivo = true;
-        lanceAtual = 0;
-        vencedorAtual = '';
-      } else if (cmd.tipo === 'lance') {
-        const { nome, valor } = cmd;
-        if (valor > lanceAtual) {
-          lanceAtual = valor;
-          vencedorAtual = nome;
-          await publisher.publish(CANAL_LEILAO, JSON.stringify({
-              tipo: 'lance',
-              nome,
-              valor,
-              mensagem: `Novo lance de ${nome}: R$${valor}`
-          }));
+        const cmd = JSON.parse(message);
+        const { productId } = cmd;
+
+        if (cmd.tipo === 'iniciar') {
+            const { item } = cmd;
+            leiloes.set(productId, {
+                item,
+                ativo: true,
+                lanceAtual: 0,
+                vencedorAtual: ''
+            });
+
+            const mensagem = {
+                tipo: 'inicio',
+                productId,
+                mensagem: `Leilão iniciado para ${item} (ID: ${productId})`
+            };
+            await publisher.publish(`leilao:${productId}`, JSON.stringify(mensagem));
+            broadcastSSE(mensagem);
+        } else if (cmd.tipo === 'lance') {
+            const { nome, valor } = cmd;
+            const leilao = leiloes.get(productId);
+
+            if (leilao && leilao.ativo && valor > leilao.lanceAtual) {
+                leilao.lanceAtual = valor;
+                leilao.vencedorAtual = nome;
+
+                const mensagem = {
+                    tipo: 'lance',
+                    productId,
+                    nome,
+                    valor,
+                    mensagem: `Novo lance de ${nome}: R$${valor} para ${leilao.item} (ID: ${productId})`
+                };
+                await publisher.publish(`leilao:${productId}`, JSON.stringify(mensagem));
+                broadcastSSE(mensagem);
+            } else if (leilao && leilao.ativo) {
+                const mensagem = {
+                    tipo: 'lance_invalido',
+                    productId,
+                    nome,
+                    valor,
+                    mensagem: `Lance de ${nome}: R$${valor} rejeitado para ${leilao.item} (ID: ${productId}) (menor ou igual ao lance atual de R$${leilao.lanceAtual})`
+                };
+                broadcastSSE(mensagem);
+            }
+        } else if (cmd.tipo === 'finalizar') {
+            const leilao = leiloes.get(productId);
+            if (leilao && leilao.ativo) {
+                leilao.ativo = false;
+                const mensagem = {
+                    tipo: 'fim',
+                    productId,
+                    vencedor: leilao.vencedorAtual,
+                    lance: leilao.lanceAtual,
+                    item: leilao.item,
+                    mensagem: `Leilão encerrado para ${leilao.item} (ID: ${productId})! Vencedor: ${leilao.vencedorAtual} com R$${leilao.lanceAtual}`
+                };
+                await publisher.publish(`leilao:${productId}`, JSON.stringify(mensagem));
+                broadcastSSE(mensagem);
+            }
         }
-      }
     });
 })();
 
-// Estado do leilao
-let leilaoAtivo = false;
-let itemLeilao = '';
-let lanceAtual = 0;
-let vencedorAtual = '';
-
-// Canal Redis para comunicacao
-const CANAL_LEILAO = 'leilao';
-
-// Rota para iniciar leilao
+// Rota para iniciar leilão
 app.post('/iniciar', async (req, res) => {
-    const { item } = req.body;
+    console.log('Iniciando leilão...');
+    const { item, productId } = req.body;
+    if (!productId || !item) {
+        return res.status(400).json({ erro: 'productId e item são obrigatórios' });
+    }
 
-    itemLeilao = item;
-    lanceAtual = 0;
-    vencedorAtual = '';
-    leilaoAtivo = true;
+    if (leiloes.has(productId) && leiloes.get(productId).ativo) {
+        return res.status(400).json({ erro: `Leilão para o produto ${productId} já está ativo` });
+    }
 
-    await publisher.publish(CANAL_LEILAO, JSON.stringify({
-        tipo: 'inicio',
+    leiloes.set(productId, {
         item,
-        mensagem: `Leilao iniciado para : ${item}`
-    }));
+        ativo: true,
+        lanceAtual: 0,
+        vencedorAtual: ''
+    });
 
-    res.json({ status: 'Leilao iniciado', item});
+    const mensagem = {
+        tipo: 'inicio',
+        productId,
+        mensagem: `Leilão iniciado para ${item} (ID: ${productId})`
+    };
+    await publisher.publish(`leilao:${productId}`, JSON.stringify(mensagem));
+    broadcastSSE(mensagem);
+
+    res.json({ status: 'Leilão iniciado', item, productId });
 });
-
-
 
 // Rota para receber lances
 app.post('/lance', async (req, res) => {
-    if(!leilaoAtivo) {
-        return res.status(400).json({erro: 'Leilao nao esta ativo'});
+    const { nome, valor, productId } = req.body;
+    if (!productId || !nome || !valor) {
+        return res.status(400).json({ erro: 'productId, nome e valor são obrigatórios' });
     }
 
-    const { nome, valor } = req.body;
+    const leilao = leiloes.get(productId);
+    if (!leilao || !leilao.ativo) {
+        return res.status(400).json({ erro: `Leilão para o produto ${productId} não está ativo` });
+    }
+    console.log(valor, leilao.lanceAtual);
 
-    if (valor > lanceAtual) {
-        lanceAtual = valor;
-        vencedorAtual = nome;
+    if (valor > leilao.lanceAtual) {
+        leilao.lanceAtual = valor;
+        leilao.vencedorAtual = nome;
 
-        await publisher.publish(CANAL_LEILAO, JSON.stringify({
+        const mensagem = {
             tipo: 'lance',
+            productId,
             nome,
             valor,
-            mensagem: `Novo lance de ${nome}: R$${valor}`
-        }));
-
-        res.json({ status: 'Lance aceito '});
+            mensagem: `Novo lance de ${nome}: R$${valor} para ${leilao.item} (ID: ${productId})`
+        };
+        await publisher.publish(`leilao:${productId}`, JSON.stringify(mensagem));
+        broadcastSSE(mensagem);
+        res.json({ status: 'Lance aceito' });
     } else {
-        res.status(400).json({ erro: 'Lance deve ser maior que o atual'});
+        console.log(valor, leilao.lanceAtual);
+        const mensagem = {
+            tipo: 'lance_invalido',
+            productId,
+            nome,
+            valor,
+            mensagem: `Lance de ${nome}: R$${valor} rejeitado para ${leilao.item} (ID: ${productId}) (menor ou igual ao lance atual de R$${leilao.lanceAtual})`
+        };
+        broadcastSSE(mensagem);
+        res.status(400).json({ erro: 'Lance deve ser maior que o atual' });
     }
 });
 
-// Rota para finalizar leilao
+// Rota para finalizar leilão
 app.post('/finalizar', async (req, res) => {
-    leilaoAtivo = false;
+    const { productId } = req.body;
+    if (!productId) {
+        return res.status(400).json({ erro: 'productId é obrigatório' });
+    }
 
-    await publisher.publish(CANAL_LEILAO, JSON.stringify({
+    const leilao = leiloes.get(productId);
+    if (!leilao || !leilao.ativo) {
+        return res.status(400).json({ erro: `Leilão para o produto ${productId} não está ativo` });
+    }
+
+    leilao.ativo = false;
+    const mensagem = {
         tipo: 'fim',
-        vencedor: vencedorAtual,
-        lance: lanceAtual,
-        item: itemLeilao,
-        mensagem: `Leilao encerrado! Vencedor: ${vencedorAtual} com R$${lanceAtual}`
-    }));
+        productId,
+        vencedor: leilao.vencedorAtual,
+        lance: leilao.lanceAtual,
+        item: leilao.item,
+        mensagem: `Leilão encerrado para ${leilao.item} (ID: ${productId})! Vencedor: ${leilao.vencedorAtual} com R$${leilao.lanceAtual}`
+    };
+    await publisher.publish(`leilao:${productId}`, JSON.stringify(mensagem));
+    broadcastSSE(mensagem);
 
     res.json({
-        status: "Leilao finalizado",
-        vencedor: vencedorAtual,
-        lance: lanceAtual,
-        item: itemLeilao
+        status: 'Leilão finalizado',
+        vencedor: leilao.vencedorAtual,
+        lance: leilao.lanceAtual,
+        item: leilao.item,
+        productId
     });
 });
 
-// // Publica os lances no canal Redis
-// app.post('/lance', async (req, res) => {
-//   const { nome, valor } = req.body;
-//   await publisher.publish('leilao', JSON.stringify({
-//     tipo: 'lance',
-//     nome,
-//     valor,
-//     mensagem: `Novo lance de ${nome}: R$${valor}`
-//   }));
-//   res.json({ status: 'Lance aceito' });
-// });
+// Configuração do SSE
+const clientesSSE = [];
+
+app.get('/eventos', (req, res) => {
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders();
+    clientesSSE.push(res);
+
+    req.on('close', () => {
+        const index = clientesSSE.indexOf(res);
+        if (index !== -1) clientesSSE.splice(index, 1);
+    });
+});
+
+function broadcastSSE(dado) {
+    console.log('📢 Broadcast para todos:', dado);
+    const msg = `data: ${JSON.stringify(dado)}\n\n`;
+    clientesSSE.forEach(res => res.write(msg));
+}
 
 // Inicia servidor
 const PORT = 3000;
 app.listen(PORT, () => {
-    console.log(`Servidor de leilao rodando na porta ${PORT}`);
+    console.log(`Servidor de leilão rodando na porta ${PORT}`);
 });

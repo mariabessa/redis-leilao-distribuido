@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Leilão Distribuído</title>
+</head>
+<body>
+  <h1>Leilão Distribuído</h1>
+
+  <input type="text" id="productId" placeholder="ID do Produto">
+  <input type="text" id="item" placeholder="Item do Leilão">
+  <button onclick="iniciarLeilao()">Iniciar Leilão</button>
+
+  <h2 id="status"></h2>
+
+  <input type="text" id="nome" placeholder="Seu nome">
+  <input type="number" id="valor" placeholder="Seu lance">
+  <button onclick="enviarLance()">Dar Lance</button>
+
+  <button onclick="finalizarLeilao()">Finalizar Leilão</button>
+
+  <pre id="log"></pre>
+
+  <script>
+    const apiUrl = "http://192.168.49.2:31000";
+
+    async function iniciarLeilao() {
+      const item = document.getElementById("item").value;
+      const productId = document.getElementById("productId").value;
+      if (!productId || !item) {
+        alert('ID do produto e item são obrigatórios');
+        return;
+      }
+      const res = await fetch(`${apiUrl}/iniciar`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ item, productId })
+      });
+      const data = await res.json();
+      document.getElementById("status").innerText = data.status || data.erro;
+    }
+
+    async function enviarLance() {
+      const nome = document.getElementById("nome").value;
+      const valor = parseInt(document.getElementById("valor").value);
+      const productId = document.getElementById("productId").value;
+      if (!productId || !nome || !valor) {
+        alert('ID do produto, nome e valor são obrigatórios');
+        return;
+      }
+      const res = await fetch(`${apiUrl}/lance`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ nome, valor, productId })
+      });
+      const data = await res.json();
+      document.getElementById("log").innerText += `\nLance enviado: ${JSON.stringify(data)}`;
+    }
+
+    async function finalizarLeilao() {
+      const productId = document.getElementById("productId").value;
+      if (!productId) {
+        alert('ID do produto é obrigatório');
+        return;
+      }
+      const res = await fetch(`${apiUrl}/finalizar`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ productId })
+      });
+      const data = await res.json();
+      document.getElementById("log").innerText += `\n🏁 ${JSON.stringify(data)}`;
+    }
+
+    const eventos = new EventSource(`${apiUrl}/eventos`);
+    eventos.onmessage = function(event) {
+      const msg = JSON.parse(event.data);
+      const log = document.getElementById("log");
+      log.innerText += `\n${prefix} ${msg.mensagem}`;
+    };
+  </script>
+</body>
+</html>
