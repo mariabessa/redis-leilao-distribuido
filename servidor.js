@@ -87,6 +87,18 @@ const leiloes = new Map(); // Mapa para armazenar estado de cada leilão por pro
     });
 })();
 
+// Rota para listar leilões ativos
+app.get('/leiloes', (req, res) => {
+  const auctions = Array.from(leiloes.entries()).map(([productId, leilao]) => ({
+    productId,
+    item: leilao.item,
+    ativo: leilao.ativo,
+    lanceAtual: leilao.lanceAtual,
+    vencedorAtual: leilao.vencedorAtual
+  }));
+  res.json({ auctions });
+});
+
 // Rota para iniciar leilão
 app.post('/iniciar', async (req, res) => {
     console.log('Iniciando leilão...');
