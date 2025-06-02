@@ -11,9 +11,6 @@ const redisClient = createClient({ url: 'redis://redis:6379' });
 const publisher = redisClient.duplicate();
 const subscriber = redisClient.duplicate();
 
-// Estado dos leilões (por produto)
-const leiloes = new Map(); // Mapa para armazenar estado de cada leilão por productId
-
 (async () => {
     await redisClient.connect();
     await publisher.connect();
@@ -27,7 +24,24 @@ const leiloes = new Map(); // Mapa para armazenar estado de cada leilão por pro
 
         if (cmd.tipo === 'iniciar') {
             const { item } = cmd;
-            leiloes.set(productId, {
+            // Verificar se o leilão já existe e está ativo
+            const exists = await redisClient.exists(`leilao:${productId}`);
+            if (exists) {
+                const leilao = await redisClient.hGetAll(`leilao:${productId}`);
+                if (leilao.ativo === 'true') {
+                    const mensagem = {
+                        tipo: 'erro',
+                        productId,
+                        mensagem: `Leilão para ${productId} já está ativo`
+                    };
+                    await publisher.publish(`leilao:${productId}`, JSON.stringify(mensagem));
+                    broadcastSSE(mensagem);
+                    return;
+                }
+            }
+
+            // Criar novo leilão
+            await redisClient.hSet(`leilao:${productId}`, {
                 item,
                 ativo: true,
                 lanceAtual: 0,
@@ -43,11 +57,13 @@ const leiloes = new Map(); // Mapa para armazenar estado de cada leilão por pro
             broadcastSSE(mensagem);
         } else if (cmd.tipo === 'lance') {
             const { nome, valor } = cmd;
-            const leilao = leiloes.get(productId);
+            const leilao = await redisClient.hGetAll(`leilao:${productId}`);
 
-            if (leilao && leilao.ativo && valor > leilao.lanceAtual) {
-                leilao.lanceAtual = valor;
-                leilao.vencedorAtual = nome;
+            if (leilao && leilao.ativo === 'true' && valor > parseInt(leilao.lanceAtual)) {
+                await redisClient.hSet(`leilao:${productId}`, {
+                    lanceAtual: valor,
+                    vencedorAtual: nome
+                });
 
                 const mensagem = {
                     tipo: 'lance',
@@ -58,7 +74,7 @@ const leiloes = new Map(); // Mapa para armazenar estado de cada leilão por pro
                 };
                 await publisher.publish(`leilao:${productId}`, JSON.stringify(mensagem));
                 broadcastSSE(mensagem);
-            } else if (leilao && leilao.ativo) {
+            } else if (leilao && leilao.ativo === 'true') {
                 const mensagem = {
                     tipo: 'lance_invalido',
                     productId,
@@ -69,14 +85,14 @@ const leiloes = new Map(); // Mapa para armazenar estado de cada leilão por pro
                 broadcastSSE(mensagem);
             }
         } else if (cmd.tipo === 'finalizar') {
-            const leilao = leiloes.get(productId);
-            if (leilao && leilao.ativo) {
-                leilao.ativo = false;
+            const leilao = await redisClient.hGetAll(`leilao:${productId}`);
+            if (leilao && leilao.ativo === 'true') {
+                await redisClient.hSet(`leilao:${productId}`, 'ativo', false);
                 const mensagem = {
                     tipo: 'fim',
                     productId,
                     vencedor: leilao.vencedorAtual,
-                    lance: leilao.lanceAtual,
+                    lance: parseInt(leilao.lanceAtual),
                     item: leilao.item,
                     mensagem: `Leilão encerrado para ${leilao.item} (ID: ${productId})! Vencedor: ${leilao.vencedorAtual} com R$${leilao.lanceAtual}`
                 };
@@ -88,15 +104,22 @@ const leiloes = new Map(); // Mapa para armazenar estado de cada leilão por pro
 })();
 
 // Rota para listar leilões ativos
-app.get('/leiloes', (req, res) => {
-  const auctions = Array.from(leiloes.entries()).map(([productId, leilao]) => ({
-    productId,
-    item: leilao.item,
-    ativo: leilao.ativo,
-    lanceAtual: leilao.lanceAtual,
-    vencedorAtual: leilao.vencedorAtual
-  }));
-  res.json({ auctions });
+app.get('/leiloes', async (req, res) => {
+    const keys = await redisClient.keys('leilao:*');
+    const auctions = [];
+    for (const key of keys) {
+        const leilao = await redisClient.hGetAll(key);
+        if (leilao.ativo === 'true') {
+            auctions.push({
+                productId: key.replace('leilao:', ''),
+                item: leilao.item,
+                ativo: leilao.ativo === 'true',
+                lanceAtual: parseInt(leilao.lanceAtual),
+                vencedorAtual: leilao.vencedorAtual
+            });
+        }
+    }
+    res.json({ auctions });
 });
 
 // Rota para iniciar leilão
@@ -107,16 +130,25 @@ app.post('/iniciar', async (req, res) => {
         return res.status(400).json({ erro: 'productId e item são obrigatórios' });
     }
 
-    if (leiloes.has(productId) && leiloes.get(productId).ativo) {
-        return res.status(400).json({ erro: `Leilão para o produto ${productId} já está ativo` });
+    const exists = await redisClient.exists(`leilao:${productId}`);
+    if (exists) {
+        const leilao = await redisClient.hGetAll(`leilao:${productId}`);
+        if (leilao.ativo === 'true') {
+            return res.status(400).json({ erro: `Leilão para o produto ${productId} já está ativo` });
+        }
     }
+        if (!productId || !item) {
+        console.error("Erro: productId ou item ausente na criação de leilão");
+        return;
+        }
 
-    leiloes.set(productId, {
-        item,
-        ativo: true,
-        lanceAtual: 0,
+        await redisClient.hSet(`leilao:${productId}`, {
+        item: String(item),
+        ativo: 'true',
+        lanceAtual: '0',
         vencedorAtual: ''
-    });
+        });
+
 
     const mensagem = {
         tipo: 'inicio',
@@ -136,15 +168,16 @@ app.post('/lance', async (req, res) => {
         return res.status(400).json({ erro: 'productId, nome e valor são obrigatórios' });
     }
 
-    const leilao = leiloes.get(productId);
-    if (!leilao || !leilao.ativo) {
+    const leilao = await redisClient.hGetAll(`leilao:${productId}`);
+    if (!leilao || leilao.ativo !== 'true') {
         return res.status(400).json({ erro: `Leilão para o produto ${productId} não está ativo` });
     }
-    console.log(valor, leilao.lanceAtual);
 
-    if (valor > leilao.lanceAtual) {
-        leilao.lanceAtual = valor;
-        leilao.vencedorAtual = nome;
+    if (valor > parseInt(leilao.lanceAtual)) {
+        await redisClient.hSet(`leilao:${productId}`, {
+            lanceAtual: valor,
+            vencedorAtual: nome
+        });
 
         const mensagem = {
             tipo: 'lance',
@@ -157,7 +190,6 @@ app.post('/lance', async (req, res) => {
         broadcastSSE(mensagem);
         res.json({ status: 'Lance aceito' });
     } else {
-        console.log(valor, leilao.lanceAtual);
         const mensagem = {
             tipo: 'lance_invalido',
             productId,
@@ -177,17 +209,17 @@ app.post('/finalizar', async (req, res) => {
         return res.status(400).json({ erro: 'productId é obrigatório' });
     }
 
-    const leilao = leiloes.get(productId);
-    if (!leilao || !leilao.ativo) {
+    const leilao = await redisClient.hGetAll(`leilao:${productId}`);
+    if (!leilao || leilao.ativo !== 'true') {
         return res.status(400).json({ erro: `Leilão para o produto ${productId} não está ativo` });
     }
 
-    leilao.ativo = false;
+    await redisClient.hSet(`leilao:${productId}`, 'ativo', false);
     const mensagem = {
         tipo: 'fim',
         productId,
         vencedor: leilao.vencedorAtual,
-        lance: leilao.lanceAtual,
+        lance: parseInt(leilao.lanceAtual),
         item: leilao.item,
         mensagem: `Leilão encerrado para ${leilao.item} (ID: ${productId})! Vencedor: ${leilao.vencedorAtual} com R$${leilao.lanceAtual}`
     };
@@ -197,7 +229,7 @@ app.post('/finalizar', async (req, res) => {
     res.json({
         status: 'Leilão finalizado',
         vencedor: leilao.vencedorAtual,
-        lance: leilao.lanceAtual,
+        lance: parseInt(leilao.lanceAtual),
         item: leilao.item,
         productId
     });
@@ -220,7 +252,7 @@ app.get('/eventos', (req, res) => {
 });
 
 function broadcastSSE(dado) {
-    console.log('📢 Broadcast para todos:', dado);
+    console.log('Broadcast para todos:', dado);
     const msg = `data: ${JSON.stringify(dado)}\n\n`;
     clientesSSE.forEach(res => res.write(msg));
 }

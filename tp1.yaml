@@ -3,7 +3,7 @@ kind: Deployment
 metadata:
   name: redis
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       app: redis
@@ -15,6 +15,7 @@ spec:
       containers:
         - name: redis
           image: redis:latest
+          command: ["redis-server", "--appendonly", "yes"]
           ports:
             - containerPort: 6379
           volumeMounts:
@@ -22,7 +23,22 @@ spec:
               mountPath: /data
       volumes:
         - name: redis-storage
-          emptyDir: {}
+          persistentVolumeClaim:
+            claimName: redis-pvc
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: redis-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+  # Optional: Specify storage class for cloud provider (e.g., AWS EBS, Google PD)
+  # storageClassName: gp2  # Uncomment for AWS EKS
+  # storageClassName: standard  # Uncomment for Google GKE
 ---
 apiVersion: v1
 kind: Service
@@ -31,6 +47,7 @@ metadata:
 spec:
   ports:
     - port: 6379
+      targetPort: 6379
   selector:
     app: redis
 ---
@@ -51,7 +68,7 @@ spec:
       containers:
         - name: servidor
           image: camilaapa/redis_app:latest
-          imagePullPolicy: Never
+          imagePullPolicy: Never  # Change to Always for cloud deployment with a registry
           command: ["node", "servidor.js"]
           ports:
             - containerPort: 3000
@@ -71,38 +88,3 @@ spec:
       nodePort: 31000
   selector:
     app: servidor
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: cliente
-spec:
-  replicas: 5
-  selector:
-    matchLabels:
-      app: cliente
-  template:
-    metadata:
-      labels:
-        app: cliente
-    spec:
-      containers:
-        - name: cliente
-          image: camilaapa/redis_app:latest
-          env:
-            - name: REDIS_URL
-              value: redis://redis:6379
-            - name: APP_SCRIPT
-              value: cliente.js
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: cliente
-spec:
-  type: ClusterIP
-  selector:
-    app: cliente
-  ports:
-    - port: 80
-      targetPort: 3000
