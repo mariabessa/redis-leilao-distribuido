@@ -3,41 +3,229 @@
 <head>
   <title>Leilão Distribuído</title>
   <style>
-    body { font-family: Arial, sans-serif; margin: 20px; }
-    .section { margin-bottom: 20px; padding: 10px; border: 1px solid #ccc; }
-    .admin { background-color: #e0f7fa; }
-    .client { background-color: #e8f5e9; }
-    #log { max-height: 300px; overflow-y: auto; border: 1px solid #ccc; padding: 10px; }
-    button { margin: 5px; }
-    select, input { margin: 5px; }
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      max-width: 1000px;
+      margin: 0 auto;
+      padding: 20px;
+      background-color: #f5f7fa;
+      background-image: url(/home/kaka/SD/TP1/leilaoImagem.jpg);
+      color: #333;
+    }
+    
+    h1 {
+      color: #2c3e50;
+      text-align: center;
+      margin-bottom: 30px;
+      border-bottom: 2px solid #3498db;
+      padding-bottom: 10px;
+    }
+    
+    .section {
+      margin-bottom: 25px;
+      padding: 20px;
+      border-radius: 8px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+      background-color: white;
+    }
+    
+    .admin {
+      border-left: 5px solid #3498db;
+    }
+    
+    .client {
+      border-left: 5px solid #2ecc71;
+    }
+    
+    #log {
+      max-height: 300px;
+      overflow-y: auto;
+      border: 1px solid #ddd;
+      padding: 15px;
+      background-color: #f8f9fa;
+      border-radius: 5px;
+      font-family: 'Courier New', monospace;
+      white-space: pre-wrap;
+    }
+    
+    button {
+      padding: 10px 15px;
+      margin: 8px 5px;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-weight: bold;
+      transition: all 0.3s;
+    }
+    
+    button.primary {
+      background-color: #3498db;
+      color: white;
+    }
+    
+    button.primary:hover {
+      background-color: #2980b9;
+    }
+    
+    button.danger {
+      background-color: #e74c3c;
+      color: white;
+    }
+    
+    button.danger:hover {
+      background-color: #c0392b;
+    }
+    
+    button.success {
+      background-color: #2ecc71;
+      color: white;
+    }
+    
+    button.success:hover {
+      background-color: #27ae60;
+    }
+    
+    select, input {
+      padding: 10px;
+      margin: 8px 5px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      width: 100%;
+      box-sizing: border-box;
+    }
+    
+    #status {
+      padding: 15px;
+      margin: 15px 0;
+      border-radius: 5px;
+      font-weight: bold;
+    }
+    
+    .auction-info {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 15px;
+    }
+    
+    .auction-item {
+      font-size: 1.2em;
+      font-weight: bold;
+      color: #2c3e50;
+    }
+    
+    .auction-id {
+      color: #7f8c8d;
+      font-size: 0.9em;
+    }
+    
+    .bid-form {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 15px;
+    }
+    
+    .highlight {
+      animation: highlight 2s;
+    }
+    
+    @keyframes highlight {
+      0% { background-color: #ffff99; }
+      100% { background-color: white; }
+    }
+    
+    .log-entry {
+      margin-bottom: 5px;
+      padding: 5px;
+      border-radius: 3px;
+    }
+    
+    .log-info {
+      background-color: #e8f4f8;
+    }
+    
+    .log-error {
+      background-color: #fde8e8;
+      color: #e74c3c;
+    }
+    
+    .log-success {
+      background-color: #e8f8f0;
+      color: #27ae60;
+    }
+    
+    .log-warning {
+      background-color: #fff8e8;
+      color: #f39c12;
+    }
+    
+    .top-bids {
+      margin-top: 15px;
+      border-top: 1px solid #eee;
+      padding-top: 15px;
+    }
+    
+    .bid-item {
+      display: flex;
+      justify-content: space-between;
+      padding: 8px;
+      border-bottom: 1px solid #eee;
+    }
+    
+    .bidder-name {
+      font-weight: bold;
+    }
+    
+    .bid-amount {
+      color: #27ae60;
+    }
   </style>
 </head>
 <body>
   <h1>Leilão Distribuído</h1>
 
   <div class="section admin">
-    <h2>Admin: Gerenciar Leilões</h2>
-    <input type="text" id="adminProductId" placeholder="ID do Produto">
-    <input type="text" id="item" placeholder="Item do Leilão">
-    <button onclick="iniciarLeilao()">Iniciar Leilão</button>
-    <button onclick="finalizarLeilao()">Finalizar Leilão</button>
+    <h2>Painel de Administração</h2>
+    <div class="auction-info">
+
+    </div>
+    
+    <div>
+      <input type="text" id="adminProductId" placeholder="ID do Produto (ex: prod123)">
+      <input type="text" id="item" placeholder="Nome do Item (ex: Pintura Rara)">
+      <div style="margin-top: 15px;">
+        <button class="success" onclick="iniciarLeilao()">Iniciar Leilão</button>
+        <button class="danger" onclick="finalizarLeilao()">Finalizar Leilão</button>
+      </div>
+    </div>
   </div>
 
   <div class="section client">
-    <h2>Cliente: Dar Lances</h2>
-    <select id="auctionSelect" onchange="updateProductId(); fetchEventHistory(this.value)">
-      <option value="">Selecione um leilão</option>
+    <h2>Painel de Lances</h2>
+    <select id="auctionSelect" onchange="updateProductId()">
+      <option value="">Selecione um leilão ativo</option>
     </select>
-    <input type="text" id="nome" placeholder="Seu nome">
-    <input type="number" id="valor" placeholder="Seu lance">
-    <button onclick="enviarLance()">Dar Lance</button>
+    
+    <div class="bid-form">
+      <div>
+        <input type="text" id="nome" placeholder="Seu nome ou identificação">
+      </div>
+      <div>
+        <input type="number" id="valor" placeholder="Valor do lance (R$)">
+      </div>
+    </div>
+    
+    <button class="primary" onclick="enviarLance()">Enviar Lance</button>
   </div>
 
-  <h2>Status</h2>
-  <div id="status"></div>
+  <div class="section">
+    <h2>Status do Sistema</h2>
+    <div id="status" class="log-info">Sistema pronto. Selecione ou inicie um leilão.</div>
+  </div>
 
-  <h2>Atualizações do Leilão</h2>
-  <pre id="log"></pre>
+  <div class="section">
+    <h2>Registro de Eventos</h2>
+    <div id="log"></div>
+  </div>
 
   <script>
     const apiUrl = "http://192.168.49.2:31000"; // Adjust for your environment
