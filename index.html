@@ -25,7 +25,7 @@
 
   <div class="section client">
     <h2>Cliente: Dar Lances</h2>
-    <select id="auctionSelect" onchange="updateProductId()">
+    <select id="auctionSelect" onchange="updateProductId(); fetchEventHistory(this.value)">
       <option value="">Selecione um leilão</option>
     </select>
     <input type="text" id="nome" placeholder="Seu nome">
@@ -40,8 +40,9 @@
   <pre id="log"></pre>
 
   <script>
-    const apiUrl = "http://192.168.49.2:31000"; // Adjust for your environment (e.g., cloud provider)
+    const apiUrl = "http://192.168.49.2:31000"; // Adjust for your environment
     let activeAuctions = [];
+    const seenEvents = new Set(); // Track unique events to avoid duplicates
 
     // Fetch and update list of active auctions
     async function fetchAuctions() {
@@ -50,15 +51,46 @@
         const data = await res.json();
         activeAuctions = data.auctions || [];
         const select = document.getElementById("auctionSelect");
+        const selectedValue = select.value;
         select.innerHTML = '<option value="">Selecione um leilão</option>';
         activeAuctions.forEach(auction => {
           const option = document.createElement("option");
           option.value = auction.productId;
           option.text = `${auction.item} (ID: ${auction.productId})`;
+          if (auction.productId === selectedValue) {
+            option.selected = true;
+          }
           select.appendChild(option);
         });
       } catch (err) {
         console.error("Erro ao buscar leilões:", err);
+      }
+    }
+
+    // Fetch event history for a productId
+    async function fetchEventHistory(productId) {
+      if (!productId) {
+        // Clear log only if no auction is selected
+        document.getElementById("log").innerText = '';
+        seenEvents.clear();
+        return;
+      }
+      try {
+        const res = await fetch(`${apiUrl}/eventos/historico?productId=${productId}`);
+        const events = await res.json();
+        const log = document.getElementById("log");
+        // Append only new historical events
+        events.reverse().forEach(event => {
+          const eventKey = `${event.tipo}:${event.productId}:${event.mensagem}`;
+          if (!seenEvents.has(eventKey)) {
+            log.innerText += `\n[Histórico] ${event.mensagem}`;
+            seenEvents.add(eventKey);
+          }
+        });
+        // Scroll to bottom
+        log.scrollTop = log.scrollHeight;
+      } catch (err) {
+        console.error("Erro ao buscar histórico:", err);
       }
     }
 
@@ -84,7 +116,7 @@
         });
         const data = await res.json();
         document.getElementById("status").innerText = data.status || data.erro;
-        fetchAuctions(); // Refresh auction list
+        fetchAuctions();
       } catch (err) {
         document.getElementById("status").innerText = "Erro ao iniciar leilão";
       }
@@ -107,6 +139,7 @@
         });
         const data = await res.json();
         document.getElementById("log").innerText += `\nLance enviado: ${data.status || data.erro}`;
+        document.getElementById("log").scrollTop = document.getElementById("log").scrollHeight;
       } catch (err) {
         document.getElementById("log").innerText += `\nErro ao enviar lance`;
       }
@@ -127,7 +160,8 @@
         });
         const data = await res.json();
         document.getElementById("log").innerText += `\n🏁 ${data.status}: ${data.vencedor} venceu com R$${data.lance} por ${data.item}`;
-        fetchAuctions(); // Refresh auction list
+        fetchAuctions();
+        document.getElementById("log").scrollTop = document.getElementById("log").scrollHeight;
       } catch (err) {
         document.getElementById("log").innerText += `\nErro ao finalizar leilão`;
       }
@@ -138,13 +172,17 @@
     eventos.onmessage = function(event) {
       const msg = JSON.parse(event.data);
       const log = document.getElementById("log");
-      log.innerText += `\n${msg.mensagem}`;
-      fetchAuctions(); // Update auction list on new events
+      const eventKey = `${msg.tipo}:${msg.productId}:${msg.mensagem}`;
+      if (!seenEvents.has(eventKey)) {
+        log.innerText += `\n${msg.mensagem}`;
+        seenEvents.add(eventKey);
+        log.scrollTop = log.scrollHeight;
+      }
     };
 
-    // Periodically fetch auctions
-    setInterval(fetchAuctions, 5000);
-    fetchAuctions(); // Initial fetch
+    // Periodically fetch auctions (less frequent)
+    setInterval(fetchAuctions, 10000); // Increased to 10 seconds
+    fetchAuctions();
   </script>
 </body>
 </html>

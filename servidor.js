@@ -24,7 +24,6 @@ const subscriber = redisClient.duplicate();
 
         if (cmd.tipo === 'iniciar') {
             const { item } = cmd;
-            // Verificar se o leilão já existe e está ativo
             const exists = await redisClient.exists(`leilao:${productId}`);
             if (exists) {
                 const leilao = await redisClient.hGetAll(`leilao:${productId}`);
@@ -35,12 +34,11 @@ const subscriber = redisClient.duplicate();
                         mensagem: `Leilão para ${productId} já está ativo`
                     };
                     await publisher.publish(`leilao:${productId}`, JSON.stringify(mensagem));
-                    broadcastSSE(mensagem);
+                    await broadcastSSE(mensagem);
                     return;
                 }
             }
 
-            // Criar novo leilão
             await redisClient.hSet(`leilao:${productId}`, {
                 item,
                 ativo: true,
@@ -54,7 +52,7 @@ const subscriber = redisClient.duplicate();
                 mensagem: `Leilão iniciado para ${item} (ID: ${productId})`
             };
             await publisher.publish(`leilao:${productId}`, JSON.stringify(mensagem));
-            broadcastSSE(mensagem);
+            await broadcastSSE(mensagem);
         } else if (cmd.tipo === 'lance') {
             const { nome, valor } = cmd;
             const leilao = await redisClient.hGetAll(`leilao:${productId}`);
@@ -73,7 +71,7 @@ const subscriber = redisClient.duplicate();
                     mensagem: `Novo lance de ${nome}: R$${valor} para ${leilao.item} (ID: ${productId})`
                 };
                 await publisher.publish(`leilao:${productId}`, JSON.stringify(mensagem));
-                broadcastSSE(mensagem);
+                await broadcastSSE(mensagem);
             } else if (leilao && leilao.ativo === 'true') {
                 const mensagem = {
                     tipo: 'lance_invalido',
@@ -82,7 +80,7 @@ const subscriber = redisClient.duplicate();
                     valor,
                     mensagem: `Lance de ${nome}: R$${valor} rejeitado para ${leilao.item} (ID: ${productId}) (menor ou igual ao lance atual de R$${leilao.lanceAtual})`
                 };
-                broadcastSSE(mensagem);
+                await broadcastSSE(mensagem);
             }
         } else if (cmd.tipo === 'finalizar') {
             const leilao = await redisClient.hGetAll(`leilao:${productId}`);
@@ -97,7 +95,7 @@ const subscriber = redisClient.duplicate();
                     mensagem: `Leilão encerrado para ${leilao.item} (ID: ${productId})! Vencedor: ${leilao.vencedorAtual} com R$${leilao.lanceAtual}`
                 };
                 await publisher.publish(`leilao:${productId}`, JSON.stringify(mensagem));
-                broadcastSSE(mensagem);
+                await broadcastSSE(mensagem);
             }
         }
     });
@@ -137,18 +135,13 @@ app.post('/iniciar', async (req, res) => {
             return res.status(400).json({ erro: `Leilão para o produto ${productId} já está ativo` });
         }
     }
-        if (!productId || !item) {
-        console.error("Erro: productId ou item ausente na criação de leilão");
-        return;
-        }
 
-        await redisClient.hSet(`leilao:${productId}`, {
+    await redisClient.hSet(`leilao:${productId}`, {
         item: String(item),
         ativo: 'true',
         lanceAtual: '0',
         vencedorAtual: ''
-        });
-
+    });
 
     const mensagem = {
         tipo: 'inicio',
@@ -156,7 +149,7 @@ app.post('/iniciar', async (req, res) => {
         mensagem: `Leilão iniciado para ${item} (ID: ${productId})`
     };
     await publisher.publish(`leilao:${productId}`, JSON.stringify(mensagem));
-    broadcastSSE(mensagem);
+    await broadcastSSE(mensagem);
 
     res.json({ status: 'Leilão iniciado', item, productId });
 });
@@ -187,7 +180,7 @@ app.post('/lance', async (req, res) => {
             mensagem: `Novo lance de ${nome}: R$${valor} para ${leilao.item} (ID: ${productId})`
         };
         await publisher.publish(`leilao:${productId}`, JSON.stringify(mensagem));
-        broadcastSSE(mensagem);
+        await broadcastSSE(mensagem);
         res.json({ status: 'Lance aceito' });
     } else {
         const mensagem = {
@@ -197,10 +190,26 @@ app.post('/lance', async (req, res) => {
             valor,
             mensagem: `Lance de ${nome}: R$${valor} rejeitado para ${leilao.item} (ID: ${productId}) (menor ou igual ao lance atual de R$${leilao.lanceAtual})`
         };
-        broadcastSSE(mensagem);
+        await broadcastSSE(mensagem);
         res.status(400).json({ erro: 'Lance deve ser maior que o atual' });
     }
 });
+
+// Rota para histórico de eventos
+app.get('/eventos/historico', async (req, res) => {
+    const { productId } = req.query;
+    const events = await redisClient.lRange(`eventos:${productId}`, 0, -1);
+    res.json(events.map(JSON.parse));
+});
+
+// Função para broadcast SSE e salvar eventos
+async function broadcastSSE(dado) {
+    if (dado.productId) {
+        await redisClient.lPush(`eventos:${dado.productId}`, JSON.stringify(dado));
+    }
+    const msg = `data: ${JSON.stringify(dado)}\n\n`;
+    clientesSSE.forEach(res => res.write(msg));
+}
 
 // Rota para finalizar leilão
 app.post('/finalizar', async (req, res) => {
@@ -224,7 +233,7 @@ app.post('/finalizar', async (req, res) => {
         mensagem: `Leilão encerrado para ${leilao.item} (ID: ${productId})! Vencedor: ${leilao.vencedorAtual} com R$${leilao.lanceAtual}`
     };
     await publisher.publish(`leilao:${productId}`, JSON.stringify(mensagem));
-    broadcastSSE(mensagem);
+    await broadcastSSE(mensagem);
 
     res.json({
         status: 'Leilão finalizado',
@@ -250,12 +259,6 @@ app.get('/eventos', (req, res) => {
         if (index !== -1) clientesSSE.splice(index, 1);
     });
 });
-
-function broadcastSSE(dado) {
-    console.log('Broadcast para todos:', dado);
-    const msg = `data: ${JSON.stringify(dado)}\n\n`;
-    clientesSSE.forEach(res => res.write(msg));
-}
 
 // Inicia servidor
 const PORT = 3000;
