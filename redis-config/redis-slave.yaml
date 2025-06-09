@@ -1,0 +1,76 @@
+#ConfigMap
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: redis-slave-config
+data:
+  redis.conf: |
+    # Redis configuration file for slave
+    port 6379
+    bind 0.0.0.0
+    protected-mode no
+    # Set slave mode
+    slaveof redis-master 6379
+    # Set a password for authentication (replace with a secure password)
+    masterauth redisStrongPass123
+
+---
+#Deployment
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis-slave
+spec:
+  replicas: 3  # Adjust as per your production needs
+  selector:
+    matchLabels:
+      app: redis
+      role: slave
+  template:
+    metadata:
+      labels:
+        app: redis
+        role: slave
+    spec:
+      containers:
+      - name: redis
+        image: redis:6.0
+        command: ["redis-server", "/etc/redis/redis.conf"]
+        ports:
+        - containerPort: 6379
+        volumeMounts:
+        - name: redis-config
+          mountPath: /etc/redis/redis.conf
+          subPath: redis.conf
+        resources:
+          requests:
+            cpu: "0.5"
+            memory: "512Mi"
+          limits:
+            cpu: "1"
+            memory: "1Gi"
+        # Enable persistence if needed
+        args:
+        - "--appendonly"
+        - "yes"
+      volumes:
+      - name: redis-config
+        configMap:
+          name: redis-slave-config
+
+---
+# Service
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-slave
+spec:
+  ports:
+  - port: 6379
+    targetPort: 6379
+  selector:
+    app: redis
+    role: slave

@@ -1,15 +1,50 @@
 const express = require('express');
 const { createClient } = require('redis');
+const Redis = require('ioredis')
 const cors = require('cors');
+const path = require('path');
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
 // Conexão com Redis
-const redisClient = createClient({ url: 'redis://redis:6379' });
+
+// Teste a conexão com o Sentinel usando comandos como redis-cli -h <sentinel-host> -p 26379
+// Configuração do Sentinel
+const redisClient = new Redis({
+  sentinels: [
+    { 
+      host: process.env.REDIS_SENTINEL_HOST, 
+      port: process.env.REDIS_SENTINEL_PORT || 26379 
+    }
+  ],
+  name: process.env.REDIS_MASTER_NAME || 'mymaster',
+  password: process.env.REDIS_PASSWORD,
+});
+
+// Add top-level error handling
+process.on('unhandledRejection', (err) => {
+  console.error('Unhandled Rejection:', err);
+  process.exit(1);
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught Exception:', err);
+  process.exit(1);
+});
+
 const publisher = redisClient.duplicate();
 const subscriber = redisClient.duplicate();
+
+
+// Configuração para servir arquivos estáticos (DEVE VIR ANTES DAS ROTAS)
+app.use(express.static(path.join(__dirname)));
+
+// Rota principal para servir o index.html
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'index.html'));
+});
 
 (async () => {
     await redisClient.connect();
@@ -25,7 +60,7 @@ const subscriber = redisClient.duplicate();
         if (cmd.tipo === 'iniciar') {
             const { item } = cmd;
             const exists = await redisClient.exists(`leilao:${productId}`);
-            if (exists) {
+            if (exists === 1) {
                 const leilao = await redisClient.hGetAll(`leilao:${productId}`);
                 if (leilao.ativo === 'true') {
                     const mensagem = {
@@ -58,10 +93,10 @@ const subscriber = redisClient.duplicate();
             const leilao = await redisClient.hGetAll(`leilao:${productId}`);
 
             if (leilao && leilao.ativo === 'true' && valor > parseInt(leilao.lanceAtual)) {
-                await redisClient.hSet(`leilao:${productId}`, {
-                    lanceAtual: valor,
-                    vencedorAtual: nome
-                });
+                await redisClient.hSet(`leilao:${productId}`, [
+                    'lanceAtual', valor,
+                    'vencedorAtual', nome
+                ]);
 
                 const mensagem = {
                     tipo: 'lance',
