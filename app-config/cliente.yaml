@@ -1,79 +1,37 @@
-# apiVersion: apps/v1
-# kind: Deployment
-# metadata:
-#   name: cliente-leilao
-# spec:
-#   replicas: 5
-#   selector:
-#     matchLabels:
-#       app: cliente-leilao
-#   template:
-#     metadata:
-#       labels:
-#         app: cliente-leilao
-#     spec:
-#       containers:
-#       - name: cliente
-#         image: node:20
-#         command: ["node", "/app/cliente.js"]
-#         env:
-#         - name: REDIS_SENTINEL_HOST
-#           value: "redis-sentinel"
-#         - name: REDIS_MASTER_NAME
-#           value: "mymaster"
-#         - name: PRODUCT_ID
-#           value: "produto1"
-#         - name: NOME_CLIENTE
-#           valueFrom:
-#             fieldRef:
-#               fieldPath: metadata.name
-#         volumeMounts:
-#         - name: cliente-codigo
-#           mountPath: /app
-#       volumes:
-#       - name: cliente-codigo
-#         configMap:
-#           name: cliente-js
-# ---
-# apiVersion: v1
-# kind: ConfigMap
-# metadata:
-#   name: cliente-js
-# data:
-#   cliente.js: |
-#         const Redis = require('ioredis');
-#         const redisClient = new Redis({
-#           sentinels: [{ host: process.env.REDIS_SENTINEL_HOST || 'redis-sentinel', port: 26379 }],
-#           name: process.env.REDIS_MASTER_NAME || 'mymaster',
-#         });
-
-#         (async () => {
-#           await redisClient.connect();
-#           console.log(`Cliente ${process.env.NOME_CLIENTE} conectado`);
-
-#           const productId = process.env.PRODUCT_ID || 'produto1';
-
-#           const intervalo = setInterval(async () => {
-#             const leilao = await redisClient.hGetAll(`leilao:${productId}`);
-#             if (leilao.ativo === 'true') {
-#               const lanceAtual = parseInt(leilao.lanceAtual);
-#               const novoLance = lanceAtual + Math.floor(Math.random() * 100 + 1);
-
-#               const comando = {
-#                 tipo: 'lance',
-#                 productId,
-#                 nome: process.env.NOME_CLIENTE,
-#                 valor: novoLance
-#               };
-
-#               await redisClient.publish('comando', JSON.stringify(comando));
-#               console.log(`Cliente ${comando.nome} deu lance de R$${comando.valor}`);
-#             }
-#           }, 3000);
-
-#           process.on('SIGINT', () => {
-#             clearInterval(intervalo);
-#             redisClient.quit();
-#           });
-#         })();
-
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: subscriber
+spec:
+  serviceName: "subscriber"
+  replicas: 5
+  selector:
+    matchLabels:
+      app: subscriber
+  template:
+    metadata:
+      labels:
+        app: subscriber
+    spec:
+      containers:
+      - name: cliente
+        image: camilaapa/redis_app:latest
+        command: ["node", "cliente.js"]
+        env:
+        - name: REDIS_SENTINEL_HOST
+          value: "redis-sentinel"
+        - name: REDIS_SENTINEL_PORT
+          value: "26379"
+        - name: REDIS_MASTER_NAME
+          value: "mymaster"
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: redis-secrets
+              key: password
+        - name: PRODUCT_ID
+          value: "produto1"
+        - name: NOME_CLIENTE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name

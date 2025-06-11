@@ -8,19 +8,21 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Conexão com Redis
+const sentinelPort = parseInt(process.env.REDIS_SENTINEL_PORT, 10);
+const portFinal = Number.isInteger(sentinelPort) ? sentinelPort : 26379;
 
-// Teste a conexão com o Sentinel usando comandos como redis-cli -h <sentinel-host> -p 26379
-// Configuração do Sentinel
 const redisClient = new Redis({
   sentinels: [
     { 
-      host: process.env.REDIS_SENTINEL_HOST, 
-      port: process.env.REDIS_SENTINEL_PORT || 26379 
+      host: process.env.REDIS_SENTINEL_HOST || 'redis-sentinel', 
+      port: parseInt(process.env.REDIS_SENTINEL_PORT || 26379)
     }
   ],
   name: process.env.REDIS_MASTER_NAME || 'mymaster',
   password: process.env.REDIS_PASSWORD,
+  sentinelRetryStrategy: times => Math.min(times * 100, 3000),
+  enableReadyCheck: true,
+  maxRetriesPerRequest: 3
 });
 
 // Add top-level error handling
@@ -29,131 +31,130 @@ process.on('unhandledRejection', (err) => {
   process.exit(1);
 });
 
-process.on('uncaughtException', (err) => {
-  console.error('Uncaught Exception:', err);
-  process.exit(1);
-});
-
 const publisher = redisClient.duplicate();
 const subscriber = redisClient.duplicate();
 
-
-// Configuração para servir arquivos estáticos (DEVE VIR ANTES DAS ROTAS)
 app.use(express.static(path.join(__dirname)));
 
-// Rota principal para servir o index.html
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'index.html'));
 });
 
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('🚨 Rejeição não tratada:', reason);
+});
+
 (async () => {
-    await redisClient.connect();
-    await publisher.connect();
-    await subscriber.connect();
-    console.log('Conectado ao Redis');
+  await subscriber.subscribe('comando', async (message) => {
+    if (!message || message.trim() === '' || message === 'null') {
+      console.warn('Mensagem vazia ou nula recebida');
+      return;
+    }
 
-    // Comando para processar mensagens no canal 'comando'
-    await subscriber.subscribe('comando', async (message) => {
-        const cmd = JSON.parse(message);
-        const { productId } = cmd;
+    let cmd;
 
-        if (cmd.tipo === 'iniciar') {
-            const { item } = cmd;
-            const exists = await redisClient.exists(`leilao:${productId}`);
-            if (exists === 1) {
-                const leilao = await redisClient.hGetAll(`leilao:${productId}`);
-                if (leilao.ativo === 'true') {
-                    const mensagem = {
-                        tipo: 'erro',
-                        productId,
-                        mensagem: `Leilão para ${productId} já está ativo`
-                    };
-                    await publisher.publish(`leilao:${productId}`, JSON.stringify(mensagem));
-                    await broadcastSSE(mensagem);
-                    return;
-                }
-            }
+    try {
+      cmd = JSON.parse(message);
+    } catch (err) {
+      console.error('Erro ao fazer parse da mensagem:', message);
+      return;
+    }
 
-            await redisClient.hSet(`leilao:${productId}`, {
-                item,
-                ativo: true,
-                lanceAtual: 0,
-                vencedorAtual: ''
-            });
+    if (!cmd || typeof cmd !== 'object' || !cmd.productId || !cmd.tipo) {
+      console.warn('Comando inválido recebido:', cmd);
+      return;
+    }
+
+    const productId = cmd.productId;
+
+    if (cmd.tipo === 'iniciar') {
+      const { item } = cmd;
+      const exists = await redisClient.exists(`leilao:${productId}`);
+      if (exists === 1) {
+        const leilao = await redisClient.hgetall(`leilao:${productId}`);
+        if (leilao.ativo === 'true') {
+          const mensagem = {
+            tipo: 'erro',
+            productId,
+            mensagem: `Leilão para ${productId} já está ativo`
+          };
+          await publisher.publish(`leilao:${productId}`, JSON.stringify(mensagem));
+          await broadcastSSE(mensagem);
+          return;
+        }
+      }
+
+      await redisClient.hSet(`leilao:${productId}`, {
+        item,
+        ativo: true,
+        lanceAtual: 0,
+        vencedorAtual: ''
+      });
+
+      const mensagem = {
+        tipo: 'inicio',
+        productId,
+        mensagem: `Leilão iniciado para ${item} (ID: ${productId})`
+      };
+      await publisher.publish(`leilao:${productId}`, JSON.stringify(mensagem));
+      await broadcastSSE(mensagem);
+
+    } else if (cmd.tipo === 'lance') {
+        const { nome, valor } = cmd;
+        const leilao = await redisClient.hGetAll(`leilao:${productId}`);
+
+        if (leilao && leilao.ativo === 'true') {
+          if (valor > parseInt(leilao.lanceAtual)) {
+            await redisClient.hSet(`leilao:${productId}`, [
+              'lanceAtual', valor,
+              'vencedorAtual', nome
+            ]);
 
             const mensagem = {
-                tipo: 'inicio',
-                productId,
-                mensagem: `Leilão iniciado para ${item} (ID: ${productId})`
+              tipo: 'lance',
+              productId,
+              nome,
+              valor,
+              mensagem: `Novo lance de ${nome}: R$${valor} para ${leilao.item} (ID: ${productId})`
             };
             await publisher.publish(`leilao:${productId}`, JSON.stringify(mensagem));
             await broadcastSSE(mensagem);
-        } else if (cmd.tipo === 'lance') {
-            const { nome, valor } = cmd;
-            const leilao = await redisClient.hGetAll(`leilao:${productId}`);
-
-            if (leilao && leilao.ativo === 'true' && valor > parseInt(leilao.lanceAtual)) {
-                await redisClient.hSet(`leilao:${productId}`, [
-                    'lanceAtual', valor,
-                    'vencedorAtual', nome
-                ]);
-
-                const mensagem = {
-                    tipo: 'lance',
-                    productId,
-                    nome,
-                    valor,
-                    mensagem: `Novo lance de ${nome}: R$${valor} para ${leilao.item} (ID: ${productId})`
-                };
-                await publisher.publish(`leilao:${productId}`, JSON.stringify(mensagem));
-                await broadcastSSE(mensagem);
-            } else if (leilao && leilao.ativo === 'true') {
-                const mensagem = {
-                    tipo: 'lance_invalido',
-                    productId,
-                    nome,
-                    valor,
-                    mensagem: `Lance de ${nome}: R$${valor} rejeitado para ${leilao.item} (ID: ${productId}) (menor ou igual ao lance atual de R$${leilao.lanceAtual})`
-                };
-                await broadcastSSE(mensagem);
-            }
-        } else if (cmd.tipo === 'finalizar') {
-            const leilao = await redisClient.hGetAll(`leilao:${productId}`);
-            if (leilao && leilao.ativo === 'true') {
-                await redisClient.hSet(`leilao:${productId}`, 'ativo', false);
-                const mensagem = {
-                    tipo: 'fim',
-                    productId,
-                    vencedor: leilao.vencedorAtual,
-                    lance: parseInt(leilao.lanceAtual),
-                    item: leilao.item,
-                    mensagem: `Leilão encerrado para ${leilao.item} (ID: ${productId})! Vencedor: ${leilao.vencedorAtual} com R$${leilao.lanceAtual}`
-                };
-                await publisher.publish(`leilao:${productId}`, JSON.stringify(mensagem));
-                await broadcastSSE(mensagem);
-            }
+            console.log(`Lance aceito: ${nome} - R$${valor}`);
+          } else {
+            const mensagem = {
+              tipo: 'lance_invalido',
+              productId,
+              nome,
+              valor,
+              mensagem: `Lance de ${nome}: R$${valor} rejeitado para ${leilao.item} (ID: ${productId}) (menor ou igual ao lance atual de R$${leilao.lanceAtual})`
+            };
+            await publisher.publish(`leilao:${productId}`, JSON.stringify(mensagem)); // Adicionado publicação no Redis
+            await broadcastSSE(mensagem);
+            console.log(`Lance rejeitado: ${nome} - R$${valor}`);
+          }
+        } else {
+          console.log(`Leilão para ${productId} não está ativo ou não existe.`);
         }
-    });
-})();
-
-// Rota para listar leilões ativos
-app.get('/leiloes', async (req, res) => {
-    const keys = await redisClient.keys('leilao:*');
-    const auctions = [];
-    for (const key of keys) {
-        const leilao = await redisClient.hGetAll(key);
-        if (leilao.ativo === 'true') {
-            auctions.push({
-                productId: key.replace('leilao:', ''),
-                item: leilao.item,
-                ativo: leilao.ativo === 'true',
-                lanceAtual: parseInt(leilao.lanceAtual),
-                vencedorAtual: leilao.vencedorAtual
-            });
+      } else if (cmd.tipo === 'finalizar') {
+        const leilao = await redisClient.hGetAll(`leilao:${productId}`);
+        if (leilao && leilao.ativo === 'true') {
+          await redisClient.hSet(`leilao:${productId}`, 'ativo', false);
+          const mensagem = {
+            tipo: 'fim',
+            productId,
+            vencedor: leilao.vencedorAtual,
+            lance: parseInt(leilao.lanceAtual),
+            item: leilao.item,
+            mensagem: `Leilão encerrado para ${leilao.item} (ID: ${productId})! Vencedor: ${leilao.vencedorAtual} com R$${leilao.lanceAtual}`
+          };
+          await publisher.publish(`leilao:${productId}`, JSON.stringify(mensagem));
+          await broadcastSSE(mensagem);
         }
-    }
-    res.json({ auctions });
-});
+        }
+      });
+  })();
+
 
 // Rota para iniciar leilão
 app.post('/iniciar', async (req, res) => {
@@ -225,6 +226,8 @@ app.post('/lance', async (req, res) => {
             valor,
             mensagem: `Lance de ${nome}: R$${valor} rejeitado para ${leilao.item} (ID: ${productId}) (menor ou igual ao lance atual de R$${leilao.lanceAtual})`
         };
+        // Correção: Publicar no Redis para lances inválidos
+        await publisher.publish(`leilao:${productId}`, JSON.stringify(mensagem));
         await broadcastSSE(mensagem);
         res.status(400).json({ erro: 'Lance deve ser maior que o atual' });
     }
@@ -300,3 +303,14 @@ const PORT = 3000;
 app.listen(PORT, () => {
     console.log(`Servidor de leilão rodando na porta ${PORT}`);
 });
+
+// Adicione no final do arquivo servidor.js
+setTimeout(async () => {
+  await redisClient.hset('leilao:produto1', {
+    ativo: 'true',
+    item: 'Produto Auto-Iniciado',
+    lanceAtual: '0',
+    vencedorAtual: 'Nenhum'
+  });
+  console.log("Leilão para produto1 iniciado automaticamente");
+}, 5000);

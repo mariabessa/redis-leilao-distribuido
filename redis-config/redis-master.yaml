@@ -6,13 +6,10 @@ metadata:
   name: redis-master-config
 data:
   redis.conf: |
-    # Redis configuration file
     port 6379
     bind 0.0.0.0
     protected-mode no
-    # Enable persistence
     appendonly yes
-    # Set a password for authentication (replace with a secure password)
     requirepass redisStrongPass123
 
 ---
@@ -37,12 +34,12 @@ spec:
       containers:
       - name: redis
         image: redis:6.0
-        command: ["redis-server", "/etc/redis/redis.conf"]
+        command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
         ports:
         - containerPort: 6379
         volumeMounts:
         - name: redis-config
-          mountPath: /etc/redis/redis.conf
+          mountPath: /usr/local/etc/redis/redis.conf
           subPath: redis.conf
         resources:
           requests:

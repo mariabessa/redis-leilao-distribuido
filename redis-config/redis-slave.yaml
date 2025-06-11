@@ -37,12 +37,12 @@ spec:
       containers:
       - name: redis
         image: redis:6.0
-        command: ["redis-server", "/etc/redis/redis.conf"]
+        command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
         ports:
         - containerPort: 6379
         volumeMounts:
         - name: redis-config
-          mountPath: /etc/redis/redis.conf
+          mountPath: /usr/local/etc/redis/redis.conf
           subPath: redis.conf
         resources:
           requests:
