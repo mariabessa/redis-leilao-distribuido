@@ -15,8 +15,8 @@ spec:
     spec:
       containers:
       - name: cliente
-        image: redis-app-local
-        imagePullPolicy: Never
+        image: camilaapa/redis_app:latest
+        imagePullPolicy: Always
         command: ["node", "cliente.js"]
         env:
         - name: REDIS_SENTINEL_HOST

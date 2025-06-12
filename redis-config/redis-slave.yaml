@@ -23,7 +23,7 @@ kind: Deployment
 metadata:
   name: redis-slave
 spec:
-  replicas: 3  # Adjust as per your production needs
+  replicas: 3  
   selector:
     matchLabels:
       app: redis

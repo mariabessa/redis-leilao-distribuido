@@ -14,15 +14,15 @@ spec:
     spec:
       containers:
       - name: servidor
-        image: redis-app-local
-        imagePullPolicy: Never
+        image: camilaapa/redis_app:latest
+        imagePullPolicy: Always
         ports:
         - containerPort: 3000
         env:
-        #- name: REDIS_SENTINEL_QUORUM
-        #  value: "2"  
-        #- name: REDIS_SENTINEL_RETRY_STRATEGY
-        #  value: "1000"  
+        - name: REDIS_SENTINEL_QUORUM
+          value: "2"  
+        - name: REDIS_SENTINEL_RETRY_STRATEGY
+          value: "1000"  
         - name: REDIS_SENTINEL_HOST
           value: "redis-sentinel"
         - name: REDIS_SENTINEL_PORT
