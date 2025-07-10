@@ -1,6 +1,8 @@
-# Dockerfile
-FROM node:18
+FROM node:20
 WORKDIR /app
-COPY . .
+
+COPY package*.json ./
 RUN npm install
-CMD ["node", "cliente.js"]
+
+COPY servidor.js .
+COPY cliente.js .

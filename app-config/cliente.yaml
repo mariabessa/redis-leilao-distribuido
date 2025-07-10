@@ -1,0 +1,38 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: subscriber
+spec:
+  serviceName: "subscriber"
+  replicas: 5
+  selector:
+    matchLabels:
+      app: subscriber
+  template:
+    metadata:
+      labels:
+        app: subscriber
+    spec:
+      containers:
+      - name: cliente
+        image: camilaapa/redis_app:latest
+        imagePullPolicy: Always
+        command: ["node", "cliente.js"]
+        env:
+        - name: REDIS_SENTINEL_HOST
+          value: "redis-sentinel"
+        - name: REDIS_SENTINEL_PORT
+          value: "26379"
+        - name: REDIS_MASTER_NAME
+          value: "mymaster"
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: redis-secrets
+              key: password
+        - name: PRODUCT_ID
+          value: "produto1"
+        - name: NOME_CLIENTE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name

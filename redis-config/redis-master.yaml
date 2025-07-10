@@ -1,0 +1,73 @@
+#ConfigMap
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: redis-master-config
+data:
+  redis.conf: |
+    port 6379
+    bind 0.0.0.0
+    protected-mode no
+    appendonly yes
+    requirepass redisStrongPass123
+
+---
+#Deployment
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis-master
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+      role: master
+  template:
+    metadata:
+      labels:
+        app: redis
+        role: master
+    spec:
+      containers:
+      - name: redis
+        image: redis:6.0
+        command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
+        ports:
+        - containerPort: 6379
+        volumeMounts:
+        - name: redis-config
+          mountPath: /usr/local/etc/redis/redis.conf
+          subPath: redis.conf
+        resources:
+          requests:
+            cpu: "0.5"
+            memory: "512Mi"
+          limits:
+            cpu: "1"
+            memory: "1Gi"
+        # Enable persistence
+        args:
+        - "--appendonly"
+        - "yes"
+      volumes:
+      - name: redis-config
+        configMap:
+          name: redis-master-config
+
+---
+#Service
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-master
+spec:
+  ports:
+  - port: 6379
+    targetPort: 6379
+  selector:
+    app: redis
+    role: master
